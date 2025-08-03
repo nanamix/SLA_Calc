@@ -6,6 +6,7 @@ SQLAlchemy ORM 모델 및 Pydantic 스키마
 from sqlalchemy import Column, String, Text, DECIMAL, Boolean, DateTime, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Dict, Any, List
 from datetime import datetime
@@ -40,6 +41,9 @@ class 서비스ORM모델(베이스모델):
     생성일시 = Column(DateTime(timezone=True), server_default=func.now())
     수정일시 = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     소유자아이디 = Column(UUID(as_uuid=True))
+    
+    # 관계 설정
+    SLA메트릭목록 = relationship("SLA메트릭ORM모델", back_populates="서비스")
 
     def __repr__(self):
         return f"<서비스(아이디={self.아이디}, 이름='{self.이름}')>"

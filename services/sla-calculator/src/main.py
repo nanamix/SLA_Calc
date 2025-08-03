@@ -9,6 +9,8 @@ from contextlib import asynccontextmanager
 
 from config.데이터베이스설정 import 데이터베이스_연결_초기화, 데이터베이스_연결_종료
 from controllers.서비스컨트롤러 import 서비스_라우터
+from controllers.SLA계산컨트롤러 import SLA계산_라우터
+from utils.캐시유틸 import 캐시관리자_초기화, 캐시관리자_종료
 
 
 @asynccontextmanager
@@ -16,9 +18,11 @@ async def 애플리케이션_생명주기(app: FastAPI):
     """애플리케이션 시작/종료 시 실행되는 생명주기 관리"""
     # 시작 시 실행
     await 데이터베이스_연결_초기화()
+    await 캐시관리자_초기화()
     yield
     # 종료 시 실행
     await 데이터베이스_연결_종료()
+    await 캐시관리자_종료()
 
 
 # FastAPI 애플리케이션 생성
@@ -40,6 +44,7 @@ app.add_middleware(
 
 # 라우터 등록
 app.include_router(서비스_라우터, prefix="/api/v1/services", tags=["서비스"])
+app.include_router(SLA계산_라우터, tags=["SLA 계산"])
 
 
 @app.get("/")
