@@ -2,3 +2,5 @@
 .kiro/
 
 .vscode/
+
+services/auth-service/node_modules/
