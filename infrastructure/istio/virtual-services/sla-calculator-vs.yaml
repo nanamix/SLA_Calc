@@ -1,0 +1,77 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: sla-calculator-vs
+  namespace: sla-calculator
+spec:
+  hosts:
+  - "sla-calculator.local"
+  - "api.sla-calculator.local"
+  gateways:
+  - sla-calculator-gateway
+  http:
+  # 웹 대시보드 라우팅
+  - match:
+    - uri:
+        prefix: "/"
+    - headers:
+        host:
+          exact: "sla-calculator.local"
+    route:
+    - destination:
+        host: web-dashboard-service.sla-calculator.svc.cluster.local
+        port:
+          number: 80
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+  
+  # API 라우팅
+  - match:
+    - uri:
+        prefix: "/api/auth"
+    - headers:
+        host:
+          exact: "api.sla-calculator.local"
+    route:
+    - destination:
+        host: auth-service.sla-calculator.svc.cluster.local
+        port:
+          number: 3001
+    timeout: 15s
+    retries:
+      attempts: 3
+      perTryTimeout: 5s
+  
+  - match:
+    - uri:
+        prefix: "/api/sla"
+    - headers:
+        host:
+          exact: "api.sla-calculator.local"
+    route:
+    - destination:
+        host: sla-calculator-service.sla-calculator.svc.cluster.local
+        port:
+          number: 8000
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+  
+  - match:
+    - uri:
+        prefix: "/api/data"
+    - headers:
+        host:
+          exact: "api.sla-calculator.local"
+    route:
+    - destination:
+        host: data-collector-service.sla-calculator.svc.cluster.local
+        port:
+          number: 8001
+    timeout: 60s
+    retries:
+      attempts: 2
+      perTryTimeout: 30s

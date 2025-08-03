@@ -1,0 +1,128 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgresql-init-script
+  namespace: sla-calculator
+data:
+  init-db.sql: |
+    -- SLA Calculator 데이터베이스 초기화 스크립트
+    
+    -- 확장 기능 활성화
+    CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+    CREATE EXTENSION IF NOT EXISTS "pg_stat_statements";
+    CREATE EXTENSION IF NOT EXISTS "pg_trgm";
+    
+    -- 마이그레이션 히스토리 테이블 생성
+    CREATE TABLE IF NOT EXISTS 마이그레이션히스토리 (
+        아이디 SERIAL PRIMARY KEY,
+        마이그레이션명 VARCHAR(255) UNIQUE NOT NULL,
+        실행일시 TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        성공여부 BOOLEAN DEFAULT true
+    );
+    
+    -- 사용자 테이블
+    CREATE TABLE IF NOT EXISTS 사용자 (
+        아이디 UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        이메일 VARCHAR(255) UNIQUE NOT NULL,
+        이름 VARCHAR(100) NOT NULL,
+        비밀번호해시 VARCHAR(255) NOT NULL,
+        역할 VARCHAR(20) DEFAULT 'viewer' CHECK (역할 IN ('admin', 'manager', 'viewer')),
+        권한목록 JSONB DEFAULT '[]',
+        활성여부 BOOLEAN DEFAULT true,
+        생성일시 TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        수정일시 TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        마지막로그인일시 TIMESTAMP WITH TIME ZONE,
+        로그인실패횟수 INTEGER DEFAULT 0,
+        계정잠금일시 TIMESTAMP WITH TIME ZONE
+    );
+    
+    -- 서비스 테이블
+    CREATE TABLE IF NOT EXISTS 서비스 (
+        아이디 UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        이름 VARCHAR(100) NOT NULL,
+        설명 TEXT,
+        목표SLA DECIMAL(5,2) NOT NULL CHECK (목표SLA >= 0 AND 목표SLA <= 100),
+        서비스타입 VARCHAR(20) DEFAULT 'web' CHECK (서비스타입 IN ('web', 'api', 'database', 'infrastructure')),
+        모니터링설정 JSONB DEFAULT '{}',
+        활성여부 BOOLEAN DEFAULT true,
+        생성일시 TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        수정일시 TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        소유자아이디 UUID REFERENCES 사용자(아이디)
+    );
+    
+    -- SLA 메트릭 테이블 (파티셔닝 적용)
+    CREATE TABLE IF NOT EXISTS SLA메트릭 (
+        아이디 UUID DEFAULT uuid_generate_v4(),
+        서비스아이디 UUID NOT NULL REFERENCES 서비스(아이디) ON DELETE CASCADE,
+        메트릭타입 VARCHAR(20) NOT NULL CHECK (메트릭타입 IN ('availability', 'response_time', 'throughput')),
+        값 DECIMAL(10,4) NOT NULL,
+        계산된SLA DECIMAL(5,2),
+        위반여부 BOOLEAN DEFAULT false,
+        메타데이터 JSONB DEFAULT '{}',
+        타임스탬프 TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (아이디, 타임스탬프)
+    ) PARTITION BY RANGE (타임스탬프);
+    
+    -- 알림 설정 테이블
+    CREATE TABLE IF NOT EXISTS 알림설정 (
+        아이디 UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        서비스아이디 UUID NOT NULL REFERENCES 서비스(아이디) ON DELETE CASCADE,
+        임계값타입 VARCHAR(10) NOT NULL CHECK (임계값타입 IN ('below', 'above')),
+        임계값 DECIMAL(5,2) NOT NULL,
+        알림채널 JSONB NOT NULL DEFAULT '[]',
+        활성여부 BOOLEAN DEFAULT true,
+        쿨다운시간 INTEGER DEFAULT 30,
+        마지막알림일시 TIMESTAMP WITH TIME ZONE,
+        생성일시 TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        수정일시 TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+    
+    -- 알림 히스토리 테이블
+    CREATE TABLE IF NOT EXISTS 알림히스토리 (
+        아이디 UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        알림설정아이디 UUID NOT NULL REFERENCES 알림설정(아이디) ON DELETE CASCADE,
+        서비스아이디 UUID NOT NULL REFERENCES 서비스(아이디) ON DELETE CASCADE,
+        메시지 TEXT NOT NULL,
+        발송채널 VARCHAR(50) NOT NULL,
+        발송상태 VARCHAR(20) DEFAULT 'pending' CHECK (발송상태 IN ('pending', 'sent', 'failed')),
+        발송일시 TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        오류메시지 TEXT,
+        재시도횟수 INTEGER DEFAULT 0
+    );
+    
+    -- 기본 인덱스 생성
+    CREATE INDEX IF NOT EXISTS idx_사용자_이메일 ON 사용자(이메일);
+    CREATE INDEX IF NOT EXISTS idx_서비스_이름 ON 서비스 USING gin(이름 gin_trgm_ops);
+    CREATE INDEX IF NOT EXISTS idx_sla메트릭_서비스아이디_타임스탬프 ON SLA메트릭(서비스아이디, 타임스탬프 DESC);
+    CREATE INDEX IF NOT EXISTS idx_알림설정_서비스아이디 ON 알림설정(서비스아이디);
+    CREATE INDEX IF NOT EXISTS idx_알림히스토리_발송일시 ON 알림히스토리(발송일시 DESC);
+    
+    -- 기본 관리자 사용자 생성 (비밀번호: admin123)
+    INSERT INTO 사용자 (이메일, 이름, 비밀번호해시, 역할, 권한목록) 
+    VALUES ('admin@sla-calculator.local', '시스템 관리자', '$2b$10$rQZ8kHWKQVz8kHWKQVz8kOQVz8kHWKQVz8kHWKQVz8kHWKQVz8kH', 'admin',
+            '["user_management", "service_management", "alert_management", "report_management", "system_settings"]')
+    ON CONFLICT (이메일) DO NOTHING;
+    
+    -- 마이그레이션 기록
+    INSERT INTO 마이그레이션히스토리 (마이그레이션명) 
+    VALUES ('init_database') 
+    ON CONFLICT (마이그레이션명) DO NOTHING;
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgresql-secret
+  namespace: sla-calculator
+type: Opaque
+data:
+  password: c2xhX3Bhc3N3b3Jk  # base64 encoded "sla_password"
+  username: c2xhX3VzZXI=      # base64 encoded "sla_user"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: redis-secret
+  namespace: sla-calculator
+type: Opaque
+data:
+  password: ""  # Redis 비밀번호 (필요시 설정)

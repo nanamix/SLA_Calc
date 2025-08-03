@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sla-calculator
+  namespace: sla-calculator
+  labels:
+    app: sla-calculator
+    version: v1
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: sla-calculator
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: sla-calculator
+        version: v1
+    spec:
+      containers:
+      - name: sla-calculator
+        image: sla-calculator/sla-calculator:latest
+        ports:
+        - containerPort: 8000
+        env:
+        - name: REDIS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: redis-config
+              key: url
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: database-config
+              key: host
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "300m"
+          limits:
+            memory: "1Gi"
+            cpu: "800m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sla-calculator-service
+  namespace: sla-calculator
+  labels:
+    app: sla-calculator
+spec:
+  selector:
+    app: sla-calculator
+  ports:
+  - port: 8000
+    targetPort: 8000
+    name: http
+  type: ClusterIP

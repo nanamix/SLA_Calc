@@ -1,0 +1,233 @@
+# SLA Calculator 로컬 개발 환경 Docker Compose
+version: '3.8'
+
+services:
+  # 데이터베이스 서비스
+  postgresql:
+    image: postgres:15-alpine
+    container_name: sla-postgresql
+    environment:
+      POSTGRES_DB: sla_calculator
+      POSTGRES_USER: sla_user
+      POSTGRES_PASSWORD: sla_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    networks:
+      - sla-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sla_user -d sla_calculator"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis 캐시 서비스
+  redis:
+    image: redis:7-alpine
+    container_name: sla-redis
+    command: redis-server /etc/redis/redis.conf
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+      - ./infrastructure/docker/redis.conf:/etc/redis/redis.conf:ro
+    networks:
+      - sla-network
+    environment:
+      - REDIS_MAXMEMORY=512mb
+      - REDIS_MAXMEMORY_POLICY=allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # 웹 대시보드 (React)
+  web-dashboard:
+    build:
+      context: ./services/web-dashboard
+      dockerfile: Dockerfile
+    container_name: sla-web-dashboard
+    ports:
+      - "3000:80"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8080/api
+    networks:
+      - sla-network
+    depends_on:
+      - auth-service
+      - sla-calculator
+
+  # 인증 서비스 (Node.js)
+  auth-service:
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile
+    container_name: sla-auth-service
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=development
+      - JWT_SECRET=dev-jwt-secret-key
+      - DB_HOST=postgresql
+      - DB_PORT=5432
+      - DB_NAME=sla_calculator
+      - DB_USER=sla_user
+      - DB_PASSWORD=sla_password
+    networks:
+      - sla-network
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    volumes:
+      - ./services/auth-service/src:/app/src
+
+  # SLA 계산 서비스 (Python FastAPI)
+  sla-calculator:
+    build:
+      context: ./services/sla-calculator
+      dockerfile: Dockerfile
+    container_name: sla-calculator-service
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - DB_HOST=postgresql
+      - DB_PORT=5432
+      - DB_NAME=sla_calculator
+      - DB_USER=sla_user
+      - DB_PASSWORD=sla_password
+    networks:
+      - sla-network
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/sla-calculator/src:/app/src
+
+  # 데이터 수집 서비스 (Python)
+  data-collector:
+    build:
+      context: ./services/data-collector
+      dockerfile: Dockerfile
+    container_name: sla-data-collector
+    ports:
+      - "8001:8001"
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379
+      - DB_HOST=postgresql
+      - DB_PORT=5432
+      - DB_NAME=sla_calculator
+      - DB_USER=sla_user
+      - DB_PASSWORD=sla_password
+      - PROMETHEUS_URL=http://prometheus:9090
+    networks:
+      - sla-network
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/data-collector/src:/app/src
+
+  # 알림 서비스 (Node.js)
+  notification-service:
+    build:
+      context: ./services/notification-service
+      dockerfile: Dockerfile
+    container_name: sla-notification-service
+    ports:
+      - "3002:3002"
+    environment:
+      - NODE_ENV=development
+      - REDIS_URL=redis://redis:6379
+      - SMTP_HOST=smtp.gmail.com
+      - SMTP_PORT=587
+      - SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK
+    networks:
+      - sla-network
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/notification-service/src:/app/src
+
+  # 보고서 생성 서비스 (Python)
+  report-generator:
+    build:
+      context: ./services/report-generator
+      dockerfile: Dockerfile
+    container_name: sla-report-generator
+    ports:
+      - "8002:8002"
+    environment:
+      - DB_HOST=postgresql
+      - DB_PORT=5432
+      - DB_NAME=sla_calculator
+      - DB_USER=sla_user
+      - DB_PASSWORD=sla_password
+    networks:
+      - sla-network
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    volumes:
+      - ./services/report-generator/src:/app/src
+      - ./reports:/app/reports
+
+  # 사용자 관리 서비스 (Node.js)
+  user-management:
+    build:
+      context: ./services/user-management
+      dockerfile: Dockerfile
+    container_name: sla-user-management
+    ports:
+      - "3003:3003"
+    environment:
+      - NODE_ENV=development
+      - DB_HOST=postgresql
+      - DB_PORT=5432
+      - DB_NAME=sla_calculator
+      - DB_USER=sla_user
+      - DB_PASSWORD=sla_password
+    networks:
+      - sla-network
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    volumes:
+      - ./services/user-management/src:/app/src
+
+  # API Gateway (Nginx)
+  api-gateway:
+    image: nginx:alpine
+    container_name: sla-api-gateway
+    ports:
+      - "8080:80"
+    volumes:
+      - ./infrastructure/nginx/nginx.conf:/etc/nginx/nginx.conf
+    networks:
+      - sla-network
+    depends_on:
+      - auth-service
+      - sla-calculator
+      - data-collector
+      - notification-service
+      - report-generator
+      - user-management
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  sla-network:
+    driver: bridge

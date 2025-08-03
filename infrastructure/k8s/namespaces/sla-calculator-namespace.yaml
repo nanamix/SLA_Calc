@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sla-calculator
+  labels:
+    name: sla-calculator
+    istio-injection: enabled  # Istio 사이드카 자동 주입 활성화

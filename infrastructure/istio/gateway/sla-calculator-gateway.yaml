@@ -1,0 +1,26 @@
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: sla-calculator-gateway
+  namespace: sla-calculator
+spec:
+  selector:
+    istio: ingressgateway # Istio 기본 인그레스 게이트웨이 사용
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "sla-calculator.local"
+    - "api.sla-calculator.local"
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    tls:
+      mode: SIMPLE
+      credentialName: sla-calculator-tls # TLS 인증서 시크릿
+    hosts:
+    - "sla-calculator.local"
+    - "api.sla-calculator.local"
